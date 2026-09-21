@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wordtrace-v1';
+const CACHE_NAME = 'wordtrace-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -6,8 +6,11 @@ const ASSETS = [
   './app.js',
   './db.js',
   './dict.js',
+  './dict_core.js',
   './srs.js',
-  './manifest.json'
+  './manifest.json',
+  './icon/icon192.png',
+  './icon/icon512.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -35,7 +38,6 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // 本地离线优先策略
   event.respondWith(
     caches.match(event.request).then((response) => {
       return response || fetch(event.request).catch(() => {

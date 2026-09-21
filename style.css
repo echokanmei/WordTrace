@@ -217,3 +217,11 @@ body {
   background-color: var(--border-color);
   border-radius: 3px;
 }
+
+/* 优化气泡弹窗与搭配列表体验 */
+#lookup-bubble {
+  max-width: 380px;
+  min-width: 260px;
+  max-height: 80vh;
+  overflow-y: auto;
+}

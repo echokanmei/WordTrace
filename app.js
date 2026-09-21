@@ -14,14 +14,14 @@ class WordTraceApp {
   async init() {
     if (window.lucide) window.lucide.createIcons();
 
-    // 注册 PWA Service Worker
+    // 注册 PWA Service Worker (v2)
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(err => {
         console.log('PWA ServiceWorker register failed: ', err);
       });
     }
 
-    // 绑定划词监听
+    // 绑定划词监听 (放宽至支持 1~5 词的多词词组)
     const readerEl = document.getElementById('reading-body');
     if (readerEl) {
       readerEl.addEventListener('mouseup', (e) => this.handleTextSelection(e));
@@ -139,10 +139,13 @@ class WordTraceApp {
     
     let content = this.currentArticle.content;
 
+    // 按词长降序排列，优先精准匹配长词组（如 look forward to 优先于 look）
     if (words.length > 0) {
       const sortedWords = words.sort((a, b) => b.word.length - a.word.length);
       sortedWords.forEach(w => {
-        const regex = new RegExp(`\\b(${w.word})\\b`, 'gi');
+        // 安全转义正则特殊符号
+        const escaped = w.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\b(${escaped})\\b`, 'gi');
         content = content.replace(regex, `<span class="word-highlight" data-word="${w.word}">$1</span>`);
       });
     }
@@ -164,17 +167,20 @@ class WordTraceApp {
     return p ? p.innerText.trim() : node.innerText;
   }
 
-  // ==================== 划词与气泡查词 ====================
+  // ==================== 划词与气泡查词 (放宽支持 1~5 词组) ====================
   async handleTextSelection(e) {
     const selection = window.getSelection();
     const selectedText = selection.toString().trim();
 
-    if (!selectedText || selectedText.length < 2 || selectedText.split(/\s+/).length > 3) {
+    // 放宽限制：允许划选 1 到 5 个词组成的短语
+    const wordCount = selectedText.split(/\s+/).length;
+    if (!selectedText || selectedText.length < 2 || wordCount > 5) {
       return;
     }
 
-    const cleanWord = selectedText.replace(/^[^\w]+|[^\w]+$/g, '');
-    if (!cleanWord || !/^[a-zA-Z'-]+$/.test(cleanWord)) return;
+    // 过滤两端标点，保留内部合法字符
+    const cleanWord = selectedText.replace(/^[^a-zA-Z]+|[^a-zA-Z]+$/g, '').trim();
+    if (!cleanWord || !/^[a-zA-Z'-\s]+$/.test(cleanWord)) return;
 
     let contextSentence = '';
     if (selection.anchorNode) {
@@ -213,11 +219,11 @@ class WordTraceApp {
     bubble.style.top = `${rect.bottom + 8 + scrollY}px`;
     bubble.style.display = 'block';
 
-    // 查询智能词典
+    // 智能查询（支持词组与单词）
     const info = await window.dictEngine.lookup(word);
     wordEl.textContent = info.word;
 
-    // 显示语法变形徽章 (如: errors -> error 的复数形式)
+    // 显示语法变位徽章 (如: struggled with -> struggle with 的过去式)
     if (info.relationTag) {
       relEl.textContent = info.relationTag;
       relEl.classList.remove('hidden');
@@ -225,8 +231,15 @@ class WordTraceApp {
       relEl.classList.add('hidden');
     }
 
-    phoneticEl.textContent = info.phonetic || '/--/';
-    defEl.innerHTML = `<span class="text-[10px] text-blue-500 font-semibold">[${info.source}]</span> ${info.formattedDef || info.definition}`;
+    phoneticEl.textContent = info.phonetic || (info.word.includes(' ') ? '（短语搭配）' : '/--/');
+    
+    // 富文本呈现：英英释义 + 中文释义 + 经典常用搭配
+    defEl.innerHTML = `
+      <div class="mb-1 text-[10px] text-blue-500 font-semibold flex items-center gap-1">
+        <span>[${info.source}]</span>
+      </div>
+      ${info.formattedHTML}
+    `;
 
     this.currentBubbleData = {
       word: info.word,
@@ -234,6 +247,8 @@ class WordTraceApp {
       relationTag: info.relationTag || '',
       phonetic: info.phonetic,
       definition: info.definition,
+      enDef: info.enDef || '',
+      collocations: info.collocations || [],
       contextSentence: contextSentence,
       articleId: this.currentArticle ? this.currentArticle.id : null,
       articleTitle: this.currentArticle ? this.currentArticle.title : '独立划词'
@@ -312,7 +327,7 @@ class WordTraceApp {
 
   async deleteCurrentArticle() {
     if (!this.currentArticle) return;
-    if (confirm(`确定要删除文章《${this.currentArticle.title}》吗？（文章内的单词仍会保留在单词本中）`)) {
+    if (confirm(`确定要删除文章《${this.currentArticle.title}》吗？（文章内的单词/短语仍会保留在单词本中）`)) {
       await window.wordTraceDB.deleteArticle(this.currentArticle.id);
       this.currentArticle = null;
       document.getElementById('reading-title').textContent = '请在左侧选择或新增文章';
@@ -365,11 +380,12 @@ class WordTraceApp {
     this.isCardFlipped = false;
     document.getElementById('flashcard-card').classList.remove('flipped');
 
-    // 智能更新补全
-    if (!wordData.definition || wordData.definition.includes('待扩展') || wordData.definition.includes('暂无释义') || !wordData.definition.includes('.')) {
+    // 智能更新补全 (如果老数据缺少富文本，自动从最新词库重新载入)
+    if (!wordData.enDef && !wordData.collocations) {
       const freshInfo = await window.dictEngine.lookup(wordData.word);
-      if (freshInfo && freshInfo.definition && !freshInfo.definition.includes('待扩展')) {
-        wordData.definition = freshInfo.definition;
+      if (freshInfo && (freshInfo.enDef || (freshInfo.collocations && freshInfo.collocations.length > 0))) {
+        wordData.enDef = freshInfo.enDef || '';
+        wordData.collocations = freshInfo.collocations || [];
         wordData.phonetic = freshInfo.phonetic || wordData.phonetic;
         wordData.relationTag = freshInfo.relationTag || '';
         const tx = window.wordTraceDB.db.transaction(['words'], 'readwrite');
@@ -380,7 +396,7 @@ class WordTraceApp {
     // 正面
     document.getElementById('card-source').textContent = `📖 来自文章: 《${wordData.articleTitle || '无标题'}》`;
     document.getElementById('card-word').textContent = wordData.word;
-    document.getElementById('card-phonetic').textContent = wordData.phonetic || '';
+    document.getElementById('card-phonetic').textContent = wordData.phonetic || (wordData.word.includes(' ') ? '（短语搭配）' : '');
     
     // 语法关系展示
     const relEl = document.getElementById('card-relation');
@@ -391,16 +407,24 @@ class WordTraceApp {
       relEl.classList.add('hidden');
     }
 
-    // 语境句子高亮
+    // 语境原句高亮 (支持词组安全高亮)
     let context = wordData.contextSentence || '（无上下文句子）';
-    const regex = new RegExp(`\\b(${wordData.word})\\b`, 'gi');
+    const escaped = wordData.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b(${escaped})\\b`, 'gi');
     context = context.replace(regex, `<span class="bg-amber-200 dark:bg-amber-800 font-bold px-1 rounded">$1</span>`);
     document.getElementById('card-context').innerHTML = `“${context}”`;
 
-    // 背面 (使用格式化词性胶囊标签)
+    // 背面：使用富文本渲染（英英释义 + 中文释义 + 经典搭配）
     document.getElementById('card-back-word').textContent = wordData.word;
     document.getElementById('card-added-time').textContent = `添加于: ${new Date(wordData.createdAt).toLocaleDateString()}`;
-    document.getElementById('card-definition').innerHTML = window.dictEngine.formatDefinitionHTML(wordData.definition);
+    
+    const richHTML = window.dictEngine.renderRichCardHTML({
+      phonetic: wordData.phonetic,
+      zhDef: wordData.definition,
+      enDef: wordData.enDef,
+      collocations: wordData.collocations
+    });
+    document.getElementById('card-definition').innerHTML = richHTML;
 
     document.getElementById('due-count').textContent = `${this.currentReviewIndex + 1} / ${this.currentReviewList.length}`;
     if (window.lucide) window.lucide.createIcons();
@@ -426,10 +450,16 @@ class WordTraceApp {
   async editCurrentCardDefinition() {
     const wordData = this.currentReviewList[this.currentReviewIndex];
     if (!wordData) return;
-    const newDef = prompt(`修改单词【${wordData.word}】的释义：`, wordData.definition || '');
+    const newDef = prompt(`修改【${wordData.word}】的中文释义：`, wordData.definition || '');
     if (newDef !== null && newDef.trim() !== '') {
       wordData.definition = newDef.trim();
-      document.getElementById('card-definition').innerHTML = window.dictEngine.formatDefinitionHTML(wordData.definition);
+      const richHTML = window.dictEngine.renderRichCardHTML({
+        phonetic: wordData.phonetic,
+        zhDef: wordData.definition,
+        enDef: wordData.enDef,
+        collocations: wordData.collocations
+      });
+      document.getElementById('card-definition').innerHTML = richHTML;
       const tx = window.wordTraceDB.db.transaction(['words'], 'readwrite');
       tx.objectStore('words').put(wordData);
     }
@@ -484,6 +514,14 @@ class WordTraceApp {
     words.forEach(w => {
       const card = document.createElement('div');
       card.className = 'bg-[var(--bg-surface)] p-4 rounded-xl border border-[var(--border-color)] shadow-sm space-y-2.5 flex flex-col justify-between';
+      
+      const richHTML = window.dictEngine.renderRichCardHTML({
+        phonetic: w.phonetic,
+        zhDef: w.definition,
+        enDef: w.enDef,
+        collocations: w.collocations
+      });
+
       card.innerHTML = `
         <div class="space-y-1.5">
           <div class="flex items-center justify-between">
@@ -496,8 +534,8 @@ class WordTraceApp {
               <i data-lucide="volume-2" class="w-4 h-4"></i>
             </button>
           </div>
-          <div class="text-xs text-[var(--text-main)] line-clamp-2 leading-relaxed">
-            ${window.dictEngine.formatDefinitionHTML(w.definition)}
+          <div class="text-xs text-[var(--text-main)] line-clamp-4 leading-relaxed">
+            ${richHTML}
           </div>
         </div>
 
@@ -520,7 +558,7 @@ class WordTraceApp {
   }
 
   async deleteVocabWord(id) {
-    if (confirm('确定要从生词本中移除该词吗？')) {
+    if (confirm('确定要从生词本中移除该项吗？')) {
       await window.wordTraceDB.deleteWord(id);
       await this.loadVocabList();
       await this.updateReviewBadge();
@@ -530,7 +568,7 @@ class WordTraceApp {
     }
   }
 
-  // ==================== 4. 微信备份与共读分享 ====================
+  // ==================== 4. 微信友好 .txt 导出与共读分享 ====================
   async populateShareOptions() {
     const articles = await window.wordTraceDB.getArticles();
     const select = document.getElementById('share-book-select');
@@ -624,13 +662,13 @@ class WordTraceApp {
     }
 
     if (data.exportType === 'full_backup') {
-      if (confirm(`识别到【个人全量备份】：包含 ${data.articles?.length || 0} 篇文章，${data.words?.length || 0} 个单词。\n是否导入合并到当前设备？`)) {
+      if (confirm(`识别到【个人全量备份】：包含 ${data.articles?.length || 0} 篇文章，${data.words?.length || 0} 个词汇。\n是否导入合并到当前设备？`)) {
         await window.wordTraceDB.importData(data);
         alert('导入恢复成功！');
         window.location.reload();
       }
     } else if (data.exportType === 'book_share') {
-      if (confirm(`识别到朋友分享的【共读书籍】：《${data.article?.title}》，包含 ${data.words?.length || 0} 个生词。\n是否加入你的阅读库与单词本？`)) {
+      if (confirm(`识别到朋友分享的【共读书籍】：《${data.article?.title}》，包含 ${data.words?.length || 0} 个生词/短语。\n是否加入你的阅读库与单词本？`)) {
         await window.wordTraceDB.importData(data);
         alert('导入成功！已加入你的文章库，生词已重置为待复习状态。');
         window.location.reload();
