@@ -380,16 +380,36 @@ class WordTraceApp {
     this.isCardFlipped = false;
     document.getElementById('flashcard-card').classList.remove('flipped');
 
-    // 智能更新补全 (如果老数据缺少富文本，自动从最新词库重新载入)
-    if (!wordData.enDef && !wordData.collocations) {
+    // 智能更新补全 (如果老数据缺少富文本/英英释义/搭配，自动从最新词库重新载入补全)
+    const needsEnDef = !wordData.enDef || wordData.enDef.trim() === '';
+    const needsCol = !wordData.collocations || !Array.isArray(wordData.collocations) || wordData.collocations.length === 0;
+    if (needsEnDef || needsCol) {
       const freshInfo = await window.dictEngine.lookup(wordData.word);
-      if (freshInfo && (freshInfo.enDef || (freshInfo.collocations && freshInfo.collocations.length > 0))) {
-        wordData.enDef = freshInfo.enDef || '';
-        wordData.collocations = freshInfo.collocations || [];
-        wordData.phonetic = freshInfo.phonetic || wordData.phonetic;
-        wordData.relationTag = freshInfo.relationTag || '';
-        const tx = window.wordTraceDB.db.transaction(['words'], 'readwrite');
-        tx.objectStore('words').put(wordData);
+      if (freshInfo) {
+        let updated = false;
+        if (needsEnDef && freshInfo.enDef) {
+          wordData.enDef = freshInfo.enDef;
+          updated = true;
+        }
+        if (needsCol && freshInfo.collocations && freshInfo.collocations.length > 0) {
+          wordData.collocations = freshInfo.collocations;
+          updated = true;
+        }
+        if (!wordData.phonetic && freshInfo.phonetic) {
+          wordData.phonetic = freshInfo.phonetic;
+          updated = true;
+        }
+        if (!wordData.relationTag && freshInfo.relationTag) {
+          wordData.relationTag = freshInfo.relationTag;
+          updated = true;
+        }
+        if ((!wordData.definition || wordData.definition.includes('暂未收录')) && freshInfo.definition && !freshInfo.definition.includes('暂未收录')) {
+          wordData.definition = freshInfo.definition;
+          updated = true;
+        }
+        if (updated) {
+          await window.wordTraceDB.updateWord(wordData);
+        }
       }
     }
 
@@ -484,6 +504,28 @@ class WordTraceApp {
   // ==================== 3. 单词本 ====================
   async loadVocabList() {
     const words = await window.wordTraceDB.getAllWords();
+    // 自动补全可能缺失英英释义或搭配的旧数据
+    for (const w of words) {
+      const needsEn = !w.enDef || w.enDef.trim() === '';
+      const needsCol = !w.collocations || !Array.isArray(w.collocations) || w.collocations.length === 0;
+      if (needsEn || needsCol) {
+        const info = await window.dictEngine.lookup(w.word);
+        if (info) {
+          let changed = false;
+          if (needsEn && info.enDef) { w.enDef = info.enDef; changed = true; }
+          if (needsCol && info.collocations && info.collocations.length > 0) { w.collocations = info.collocations; changed = true; }
+          if (!w.phonetic && info.phonetic) { w.phonetic = info.phonetic; changed = true; }
+          if (!w.relationTag && info.relationTag) { w.relationTag = info.relationTag; changed = true; }
+          if ((!w.definition || w.definition.includes('暂未收录')) && info.definition && !info.definition.includes('暂未收录')) {
+            w.definition = info.definition;
+            changed = true;
+          }
+          if (changed) {
+            window.wordTraceDB.updateWord(w).catch(() => {});
+          }
+        }
+      }
+    }
     this.renderVocabGrid(words);
   }
 
@@ -534,7 +576,7 @@ class WordTraceApp {
               <i data-lucide="volume-2" class="w-4 h-4"></i>
             </button>
           </div>
-          <div class="text-xs text-[var(--text-main)] line-clamp-4 leading-relaxed">
+          <div class="text-xs text-[var(--text-main)] max-h-56 overflow-y-auto pr-1 leading-relaxed">
             ${richHTML}
           </div>
         </div>

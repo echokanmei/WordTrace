@@ -114,7 +114,7 @@ body {
 .flashcard-inner {
   position: relative;
   width: 100%;
-  min-height: 320px;
+  min-height: 380px;
   transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
   transform-style: preserve-3d;
 }
@@ -134,10 +134,11 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 28px;
+  padding: 24px;
 }
 .flashcard-back {
   transform: rotateY(180deg);
+  overflow-y: auto;
 }
 
 /* 按钮通用风格 */

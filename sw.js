@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wordtrace-v2';
+const CACHE_NAME = 'wordtrace-v3';
 const ASSETS = [
   './',
   './index.html',

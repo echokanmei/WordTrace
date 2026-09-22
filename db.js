@@ -112,6 +112,9 @@ class WordTraceDB {
         word: wordData.word.toLowerCase().trim(),
         phonetic: wordData.phonetic || '',
         definition: wordData.definition || '',
+        enDef: wordData.enDef || '',
+        collocations: wordData.collocations || [],
+        relationTag: wordData.relationTag || '',
         contextSentence: wordData.contextSentence || '',
         articleId: Number(wordData.articleId) || null,
         articleTitle: wordData.articleTitle || '独立查词',
@@ -169,6 +172,16 @@ class WordTraceDB {
       tx.objectStore('srs').delete(Number(id));
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async updateWord(wordData) {
+    await this.init();
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction(['words'], 'readwrite');
+      const req = tx.objectStore('words').put(wordData);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
     });
   }
 
@@ -243,6 +256,9 @@ class WordTraceDB {
         word: w.word,
         phonetic: w.phonetic,
         definition: w.definition,
+        enDef: w.enDef || '',
+        collocations: w.collocations || [],
+        relationTag: w.relationTag || '',
         contextSentence: w.contextSentence,
         createdAt: w.createdAt
       }))
